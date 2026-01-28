@@ -16,7 +16,7 @@ MODEL_PATH = "models/hand_landmarker.task"
 
 # DEV MODE: Set to True for testing on slower hardware (M1 Air)
 # Set to False for production deployment on strong PCs
-DEV_MODE = True  # Toggle this!
+DEV_MODE = False  # Toggle this!
 
 # DISTANCE OPTIMIZATION: Fixed digital zoom for 2-3 meter play
 # Higher = more zoom (better for distance, but smaller play area)
@@ -553,7 +553,7 @@ def main():
     
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(1)
     
     # Elgato Facecam optimization - Use 720p for more stable capture
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)

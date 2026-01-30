@@ -13,7 +13,7 @@ WINDOW_SIZE = (1280, 720)
 MODEL_PATH = "models/hand_landmarker.task"
 
 # DEV MODE & DISTANCE OPTIMIZATION
-DEV_MODE = True  # Toggle for M1 Air testing
+DEV_MODE = False  # Toggle for M1 Air testing
 DIGITAL_ZOOM = 1.5  # Adjust for 2-3 meter distance
 IGNORE_BACKGROUND_HANDS = True  # Ignore background interference
 

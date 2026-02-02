@@ -30,7 +30,7 @@ def generate_placeholder_assets():
     # Initialize pygame if needed
     if not pygame.get_init():
         pygame.init()
-    
+    #fsdf
     # Enhanced Battery (green rectangle with details)
     if not os.path.exists(BATTERY_IMG):
         surf = pygame.Surface((100, 150), pygame.SRCALPHA)

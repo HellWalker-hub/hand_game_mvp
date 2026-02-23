@@ -551,7 +551,7 @@ def main():
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
     
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     if not cap.isOpened():
         cap = cv2.VideoCapture(1)
     

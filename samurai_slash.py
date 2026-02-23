@@ -24,11 +24,10 @@ ENEMY_THROW_TIME = 3.0  # seconds before enemy throws projectile
 DIFFICULTY_INCREASE_RATE = 0.02  # How fast spawn rate increases
 
 # --- ASSET FOLDERS ---
-# Create these folders and put your downloaded assets here:
-ENEMY_FOLDER = "assets/enemies"  # Put enemy sprites here
-PROJECTILE_FOLDER = "assets/projectiles"  # Put shuriken/kunai sprites here
-SOUND_FOLDER = "assets/sounds"  # Put sound effects here
-MUSIC_FOLDER = "assets/music"  # Put background music here
+ENEMY_FOLDER = "assets/enemies"
+PROJECTILE_FOLDER = "assets/projectiles"
+SOUND_FOLDER = "assets/sounds"
+MUSIC_FOLDER = "assets/music"
 
 # --- COLORS ---
 BLACK = (0, 0, 0)
@@ -67,16 +66,21 @@ def calculate_hand_size(landmarks):
     height = max(y_coords) - min(y_coords)
     return width * height
 
-def load_image_or_placeholder(path, size, color):
-    """Try to load image, create colored placeholder if not found"""
-    if os.path.exists(path):
-        img = pygame.image.load(path).convert_alpha()
-        return pygame.transform.scale(img, size)
-    else:
-        # Create placeholder
-        surf = pygame.Surface(size, pygame.SRCALPHA)
-        pygame.draw.circle(surf, color, (size[0]//2, size[1]//2), min(size)//2)
-        return surf
+def load_sprite_flexible(folder, filename_variants, size, fallback_color):
+    """Try multiple filename variations (case-insensitive)"""
+    for variant in filename_variants:
+        path = os.path.join(folder, variant)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                return pygame.transform.scale(img, size)
+            except:
+                pass
+    
+    # Fallback: colored circle
+    surf = pygame.Surface(size, pygame.SRCALPHA)
+    pygame.draw.circle(surf, fallback_color, (size[0]//2, size[1]//2), min(size)//2)
+    return surf
 
 # --- PARTICLE SYSTEM ---
 class Particle:
@@ -110,7 +114,6 @@ class Projectile:
     def __init__(self, x, y, target_x, target_y):
         self.x = x
         self.y = y
-        # Calculate direction toward player
         dx = target_x - x
         dy = target_y - y
         dist = math.hypot(dx, dy)
@@ -120,9 +123,10 @@ class Projectile:
         self.radius = 15
         self.active = True
         
-        # Try to load projectile image
-        self.image = load_image_or_placeholder(
-            os.path.join(PROJECTILE_FOLDER, "shuriken.png"),
+        # Try to load projectile with flexible naming
+        self.image = load_sprite_flexible(
+            PROJECTILE_FOLDER,
+            ["shuriken.png", "Shuriken.png", "projectile.png", "Projectile.png"],
             (30, 30),
             (50, 50, 50)
         )
@@ -130,16 +134,14 @@ class Projectile:
     def update(self):
         self.x += self.vx
         self.y += self.vy
-        # Remove if off screen
         if self.x < -50 or self.x > WINDOW_SIZE[0] + 50 or self.y < -50 or self.y > WINDOW_SIZE[1] + 50:
             self.active = False
             
     def draw(self, surf):
         surf.blit(self.image, (int(self.x - 15), int(self.y - 15)))
 
-# --- ENEMY CLASS ---
+# --- ENEMY CLASS WITH STATE-BASED SPRITES ---
 class Enemy:
-    # Enemy types with different properties
     TYPES = {
         "bandit": {"hp": 1, "speed": 1.0, "points": 10, "color": (139, 69, 19)},
         "ninja": {"hp": 1, "speed": 1.5, "points": 15, "color": (50, 50, 50)},
@@ -154,7 +156,7 @@ class Enemy:
         self.max_hp = self.props["hp"]
         self.points = self.props["points"]
         
-        # Random spawn position at bottom of screen
+        # Position
         self.x = random.randint(100, WINDOW_SIZE[0] - 100)
         self.y = WINDOW_SIZE[1] + 50
         self.target_y = random.randint(WINDOW_SIZE[1] - 250, WINDOW_SIZE[1] - 150)
@@ -163,25 +165,66 @@ class Enemy:
         self.speed = self.props["speed"]
         self.rising = True
         self.rise_timer = 0
-        self.rise_duration = 60  # frames to rise
+        self.rise_duration = 60
         
         # Throw mechanics
         self.throw_timer = 0
-        self.throw_cooldown = ENEMY_THROW_TIME * 60  # Convert to frames (60 fps)
+        self.throw_cooldown = ENEMY_THROW_TIME * 60
         self.has_thrown = False
+        
+        # State management
+        self.state = "idle"  # idle, attacking, hurt, death
+        self.state_timer = 0
         
         self.radius = 40
         self.sliced = False
         
-        # Try to load enemy sprite
-        sprite_name = f"{enemy_type}.png"
-        self.image = load_image_or_placeholder(
-            os.path.join(ENEMY_FOLDER, sprite_name),
-            (80, 80),
-            self.props["color"]
-        )
+        # Load all sprite states with flexible naming
+        enemy_folder = os.path.join(ENEMY_FOLDER, enemy_type)
+        sprite_size = (80, 80)
+        
+        self.sprites = {
+            "idle": load_sprite_flexible(
+                enemy_folder,
+                ["idle.png", "Idle.png", "IDLE.png"],
+                sprite_size,
+                self.props["color"]
+            ),
+            "attack": load_sprite_flexible(
+                enemy_folder,
+                ["attack1.png", "Attack1.png", "ATTACK1.png", "attack.png", "Attack.png"],
+                sprite_size,
+                self.props["color"]
+            ),
+            "hurt": load_sprite_flexible(
+                enemy_folder,
+                ["take hit.png", "Take Hit.png", "take_hit.png", "Take_Hit.png", "TAKE_HIT.png", "hurt.png", "Hurt.png"],
+                sprite_size,
+                (255, 100, 100)
+            ),
+            "death": load_sprite_flexible(
+                enemy_folder,
+                ["death.png", "Death.png", "DEATH.png"],
+                sprite_size,
+                (100, 100, 100)
+            )
+        }
+        
+        self.current_sprite = self.sprites["idle"]
+        
+    def set_state(self, new_state, duration=0):
+        """Change enemy state and sprite"""
+        self.state = new_state
+        self.state_timer = duration
+        self.current_sprite = self.sprites.get(new_state, self.sprites["idle"])
         
     def update(self):
+        # Update state timer
+        if self.state_timer > 0:
+            self.state_timer -= 1
+            if self.state_timer == 0:
+                self.set_state("idle")
+        
         # Rise up animation
         if self.rising:
             self.rise_timer += 1
@@ -192,7 +235,6 @@ class Enemy:
                 self.rising = False
                 self.y = self.target_y
         else:
-            # Count down to throw
             self.throw_timer += 1
             
     def should_throw(self):
@@ -200,17 +242,22 @@ class Enemy:
     
     def throw(self):
         self.has_thrown = True
-        # Return projectile aimed at top-center of screen (player position)
+        self.set_state("attack", 30)  # Show attack sprite for 0.5 seconds
         return Projectile(self.x, self.y, WINDOW_SIZE[0] // 2, 50)
     
     def take_damage(self):
         self.hp -= 1
-        return self.hp <= 0  # Returns True if enemy is killed
+        if self.hp > 0:
+            self.set_state("hurt", 15)  # Flash hurt sprite briefly
+            return False
+        else:
+            self.set_state("death", 30)  # Show death sprite before removal
+            return True
     
     def draw(self, surf):
         if not self.sliced:
-            # Draw enemy sprite
-            surf.blit(self.image, (int(self.x - 40), int(self.y - 40)))
+            # Draw current sprite
+            surf.blit(self.current_sprite, (int(self.x - 40), int(self.y - 40)))
             
             # Draw HP bar if multi-HP enemy
             if self.max_hp > 1:
@@ -221,7 +268,7 @@ class Enemy:
                 pygame.draw.rect(surf, RED, (int(self.x - bar_width//2), int(self.y - 55), int(bar_width * hp_ratio), bar_height))
             
             # Draw throw indicator
-            if not self.rising and not self.has_thrown:
+            if not self.rising and not self.has_thrown and self.state != "attack":
                 progress = self.throw_timer / self.throw_cooldown
                 indicator_size = int(20 * progress)
                 color_intensity = int(255 * progress)
@@ -240,7 +287,6 @@ class HandController:
         if handedness_score < self.CONFIDENCE_THRESHOLD:
             return (self.prev_x, self.prev_y), 0, False
         
-        # Use index finger tip
         index_tip = landmarks[8]
         
         clamped_x = max(self.MARGIN, min(1 - self.MARGIN, index_tip.x))
@@ -275,22 +321,33 @@ class SoundManager:
         
     def load_assets(self):
         sound_files = {
-            "SLASH": "slash.wav",
-            "HIT": "hit.wav",
-            "THROW": "throw.wav",
-            "DAMAGE": "damage.wav"
+            "SLASH": ["slash.wav", "Slash.wav", "SLASH.wav"],
+            "HIT": ["hit.wav", "Hit.wav", "HIT.wav"],
+            "THROW": ["throw.wav", "Throw.wav", "THROW.wav"],
+            "DAMAGE": ["damage.wav", "Damage.wav", "DAMAGE.wav"]
         }
         
-        for name, filename in sound_files.items():
-            path = os.path.join(SOUND_FOLDER, filename)
-            if os.path.exists(path):
-                self.sounds[name] = pygame.mixer.Sound(path)
-                self.sounds[name].set_volume(0.5)
+        for name, variants in sound_files.items():
+            for variant in variants:
+                path = os.path.join(SOUND_FOLDER, variant)
+                if os.path.exists(path):
+                    try:
+                        self.sounds[name] = pygame.mixer.Sound(path)
+                        self.sounds[name].set_volume(0.5)
+                        break
+                    except:
+                        pass
         
         # Try to load background music
-        music_path = os.path.join(MUSIC_FOLDER, "battle.wav")
-        if os.path.exists(music_path):
-            pygame.mixer.music.load(music_path)
+        music_variants = ["battle.wav", "Battle.wav", "BATTLE.wav", "music.wav", "Music.wav"]
+        for variant in music_variants:
+            music_path = os.path.join(MUSIC_FOLDER, variant)
+            if os.path.exists(music_path):
+                try:
+                    pygame.mixer.music.load(music_path)
+                    break
+                except:
+                    pass
     
     def play(self, name):
         if name in self.sounds:
@@ -319,18 +376,19 @@ class GameScene:
         self.combo = 0
         self.combo_timer = 0
         
-        # Spawn control
         self.spawn_timer = 0
-        self.spawn_rate = 120  # Start: spawn every 2 seconds
-        self.min_spawn_rate = 30  # Max difficulty: spawn every 0.5 seconds
+        self.spawn_rate = 120
+        self.min_spawn_rate = 30
         
         self.game_over = False
         self.high_score = 0
         
+        # Track enemies marked for death
+        self.death_animations = []
+        
         self.sound.play_music()
     
     def spawn_enemy(self):
-        # Random enemy type based on score (harder enemies appear later)
         if self.score < 50:
             enemy_type = random.choice(["bandit", "ninja"])
         elif self.score < 150:
@@ -345,8 +403,7 @@ class GameScene:
             return
         
         for enemy in self.enemies[:]:
-            if not enemy.sliced:
-                # Line-to-circle collision
+            if not enemy.sliced and enemy.state != "death":
                 dx = hand_x - prev_x
                 dy = hand_y - prev_y
                 ex = enemy.x - prev_x
@@ -364,7 +421,6 @@ class GameScene:
                     killed = enemy.take_damage()
                     
                     if killed:
-                        enemy.sliced = True
                         self.score += enemy.points
                         self.combo += 1
                         self.combo_timer = 60
@@ -374,19 +430,18 @@ class GameScene:
                         for _ in range(20):
                             self.particles.append(Particle(enemy.x, enemy.y, (200, 0, 0)))
                         
-                        self.enemies.remove(enemy)
+                        # Mark for removal after death animation
+                        self.death_animations.append((enemy, 30))
                     else:
                         self.sound.play("HIT")
     
     def check_projectile_hit(self):
-        """Check if any projectile reached the player"""
         for proj in self.projectiles[:]:
-            if proj.y < 100:  # Reached top of screen (player area)
+            if proj.y < 100:
                 self.lives -= 1
                 self.combo = 0
                 self.sound.play("DAMAGE")
                 
-                # Explosion at top
                 for _ in range(30):
                     self.particles.append(Particle(proj.x, proj.y, (255, 100, 0)))
                 
@@ -405,18 +460,27 @@ class GameScene:
         if self.spawn_timer >= self.spawn_rate:
             self.spawn_enemy()
             self.spawn_timer = 0
-            # Gradually increase difficulty
             self.spawn_rate = max(self.min_spawn_rate, self.spawn_rate - DIFFICULTY_INCREASE_RATE)
         
         # Update enemies
         for enemy in self.enemies[:]:
             enemy.update()
             
-            # Check if enemy should throw
             if enemy.should_throw():
                 projectile = enemy.throw()
                 self.projectiles.append(projectile)
                 self.sound.play("THROW")
+        
+        # Update death animations
+        updated_deaths = []
+        for enemy, timer in self.death_animations:
+            timer -= 1
+            if timer <= 0:
+                if enemy in self.enemies:
+                    self.enemies.remove(enemy)
+            else:
+                updated_deaths.append((enemy, timer))
+        self.death_animations = updated_deaths
         
         # Update projectiles
         for proj in self.projectiles[:]:
@@ -424,7 +488,6 @@ class GameScene:
             if not proj.active:
                 self.projectiles.remove(proj)
         
-        # Check projectile hits
         self.check_projectile_hit()
         
         # Update particles
@@ -444,18 +507,14 @@ class GameScene:
             self.check_slice(pointer[0], pointer[1], prev_pointer[0], prev_pointer[1], velocity)
     
     def draw(self, screen):
-        # Dark background
         screen.fill((20, 15, 30))
         
-        # Draw enemies
         for enemy in self.enemies:
             enemy.draw(screen)
         
-        # Draw projectiles
         for proj in self.projectiles:
             proj.draw(screen)
         
-        # Draw particles
         for particle in self.particles:
             particle.draw(screen)
         
@@ -463,11 +522,9 @@ class GameScene:
         score_text = self.font_medium.render(f"Score: {self.score}", True, YELLOW)
         screen.blit(score_text, (20, 20))
         
-        # Lives
         for i in range(self.lives):
             pygame.draw.circle(screen, RED, (WINDOW_SIZE[0] - 50 - i * 50, 40), 18)
         
-        # Combo
         if self.combo > 1:
             combo_text = self.font_large.render(f"{self.combo}x COMBO!", True, YELLOW)
             alpha = min(255, self.combo_timer * 4)
@@ -476,7 +533,6 @@ class GameScene:
             combo_surf.set_alpha(alpha)
             screen.blit(combo_surf, (WINDOW_SIZE[0] // 2 - combo_text.get_width() // 2, 120))
         
-        # Game over
         if self.game_over:
             overlay = pygame.Surface(WINDOW_SIZE, pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 200))
@@ -499,7 +555,6 @@ def main():
     pygame.display.set_caption("Samurai Slash")
     clock = pygame.time.Clock()
     
-    # MediaPipe setup
     options = vision.HandLandmarkerOptions(
         base_options=python.BaseOptions(model_asset_path=MODEL_PATH),
         running_mode=vision.RunningMode.VIDEO,
@@ -510,7 +565,6 @@ def main():
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
     
-    # Camera setup
     cap = cv2.VideoCapture(1)
     if not cap.isOpened():
         cap = cv2.VideoCapture(0)
@@ -533,9 +587,8 @@ def main():
     result = None
     
     print("=== SAMURAI SLASH ===")
-    print("Controls: Swipe to slice enemies")
-    print("Press SPACE to restart")
-    print("Press Q to quit")
+    print("Swipe to slice enemies before they throw!")
+    print("Press SPACE to restart | Press Q to quit")
     
     while True:
         for e in pygame.event.get():
@@ -568,7 +621,6 @@ def main():
         timestamp_ms = pygame.time.get_ticks()
         result = landmarker.detect_for_video(mp_img, timestamp_ms)
         
-        # Hand isolation
         selected_hand = None
         selected_score = 0
         
@@ -594,7 +646,6 @@ def main():
                 selected_hand, selected_score, WINDOW_SIZE[0], WINDOW_SIZE[1]
             )
         
-        # Update and draw game
         game.update(pointer, velocity, is_reliable, prev_pointer)
         game.draw(screen)
         
@@ -607,7 +658,6 @@ def main():
                 pygame.draw.line(s, (100, 200, 255, alpha), controller.trail[i], controller.trail[i + 1], thickness)
                 screen.blit(s, (0, 0))
         
-        # Draw cursor
         if pointer and is_reliable:
             color = (100, 255, 100) if velocity > 15 else (255, 200, 0)
             pygame.draw.circle(screen, color, pointer, 12)

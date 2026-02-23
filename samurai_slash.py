@@ -19,10 +19,15 @@ DEV_MODE = True
 DIGITAL_ZOOM = 1.5
 IGNORE_BACKGROUND_HANDS = True
 
-# Game balance - FASTER & MORE INTENSE
-ENEMY_THROW_TIME = 1.5  # 1.5 seconds (was 3.0)
-DIFFICULTY_INCREASE_RATE = 0.05  # Faster difficulty ramp
-MAX_ENEMIES_ON_SCREEN = 8  # Allow more simultaneous enemies
+# ROI (Region of Interest) settings for background hand filtering
+USE_ROI = True  # Only detect hands in center region
+ROI_MARGIN = 0.15  # Ignore outer 15% of frame (where background people stand)
+USE_Z_DEPTH = True  # Prioritize closest hand using Z-coordinate
+
+# Game balance - BALANCED INTENSITY
+ENEMY_THROW_TIME = 2.0  # 2 seconds (was 1.5)
+DIFFICULTY_INCREASE_RATE = 0.03  # Moderate ramp (was 0.05)
+MAX_ENEMIES_ON_SCREEN = 6  # Slightly fewer (was 8)
 
 # --- ASSET FOLDERS ---
 ENEMY_FOLDER = "assets/enemies"
@@ -67,6 +72,25 @@ def calculate_hand_size(landmarks):
     width = max(x_coords) - min(x_coords)
     height = max(y_coords) - min(y_coords)
     return width * height
+
+def is_hand_in_roi(landmarks, roi_margin=0.15):
+    """Check if hand center is within ROI (center region of frame)"""
+    # Calculate hand center
+    x_coords = [lm.x for lm in landmarks]
+    y_coords = [lm.y for lm in landmarks]
+    center_x = sum(x_coords) / len(x_coords)
+    center_y = sum(y_coords) / len(y_coords)
+    
+    # Check if center is within ROI bounds
+    in_x = roi_margin < center_x < (1 - roi_margin)
+    in_y = roi_margin < center_y < (1 - roi_margin)
+    
+    return in_x and in_y
+
+def get_hand_z_depth(landmarks):
+    """Get average Z-depth of hand (lower = closer to camera)"""
+    z_coords = [lm.z for lm in landmarks]
+    return sum(z_coords) / len(z_coords)
 
 def load_sprite_flexible(folder, filename_variants, size, fallback_color):
     """Try multiple filename variations (case-insensitive)"""
@@ -405,8 +429,7 @@ class GameScene:
         
         self.enemies = []
         self.projectiles = []
-        self.particle_system = ParticleSystem()  # ADD THIS LINE
-
+        self.particle_system = ParticleSystem()
         
         self.score = 0
         self.lives = 3
@@ -414,8 +437,8 @@ class GameScene:
         self.combo_timer = 0
         
         self.spawn_timer = 0
-        self.spawn_rate = 30  # Even faster start - spawn every 0.5 sec
-        self.min_spawn_rate = 10  # Endgame chaos - spawn every 0.16 sec
+        self.spawn_rate = 60  # More balanced - spawn every 1 sec (was 0.5)
+        self.min_spawn_rate = 20  # Max difficulty - spawn every 0.33 sec (was 0.16)
         
         self.game_over = False
         self.high_score = 0
@@ -667,21 +690,46 @@ def main():
         selected_hand = None
         selected_score = 0
         
-        if result and result.hand_landmarks and IGNORE_BACKGROUND_HANDS:
-            if len(result.hand_landmarks) == 1:
-                selected_hand = result.hand_landmarks[0]
-                selected_score = result.handedness[0][0].score
-            else:
-                largest_size = 0
-                for i, hand in enumerate(result.hand_landmarks):
-                    hand_size = calculate_hand_size(hand)
-                    if hand_size > largest_size:
-                        largest_size = hand_size
-                        selected_hand = hand
-                        selected_score = result.handedness[i][0].score
-        elif result and result.hand_landmarks:
-            selected_hand = result.hand_landmarks[0]
-            selected_score = result.handedness[0][0].score
+        if result and result.hand_landmarks:
+            # Filter hands using ROI and Z-depth
+            valid_hands = []
+            
+            for i, hand in enumerate(result.hand_landmarks):
+                # Check 1: ROI filtering (ignore hands at edges)
+                if USE_ROI and not is_hand_in_roi(hand, ROI_MARGIN):
+                    continue  # Skip this hand - it's outside center region
+                
+                # Check 2: Basic confidence
+                confidence = result.handedness[i][0].score
+                if confidence < 0.3:
+                    continue
+                
+                # Store valid hand with metadata
+                z_depth = get_hand_z_depth(hand) if USE_Z_DEPTH else 0
+                hand_size = calculate_hand_size(hand)
+                valid_hands.append({
+                    'hand': hand,
+                    'confidence': confidence,
+                    'z_depth': z_depth,
+                    'size': hand_size,
+                    'index': i
+                })
+            
+            # Select best hand from valid candidates
+            if len(valid_hands) == 1:
+                # Only one valid hand - use it
+                selected_hand = valid_hands[0]['hand']
+                selected_score = valid_hands[0]['confidence']
+            elif len(valid_hands) > 1:
+                # Multiple valid hands - prioritize by Z-depth (closest)
+                if USE_Z_DEPTH:
+                    best_hand = min(valid_hands, key=lambda h: h['z_depth'])
+                else:
+                    # Fallback: use largest hand
+                    best_hand = max(valid_hands, key=lambda h: h['size'])
+                
+                selected_hand = best_hand['hand']
+                selected_score = best_hand['confidence']
         
         pointer, velocity, is_reliable = None, 0, False
         if selected_hand:

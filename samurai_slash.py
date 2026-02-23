@@ -11,7 +11,7 @@ from mediapipe.tasks.python import vision
 from collections import deque
 
 # --- CONFIGURATION ---
-WINDOW_SIZE = (1280, 720)
+WINDOW_SIZE = (1920, 1080)  # Fullscreen resolution
 MODEL_PATH = "models/hand_landmarker.task"
 
 # Distance optimization settings
@@ -19,15 +19,17 @@ DEV_MODE = True
 DIGITAL_ZOOM = 1.5
 IGNORE_BACKGROUND_HANDS = True
 
-# Game balance
-ENEMY_THROW_TIME = 3.0  # seconds before enemy throws projectile
-DIFFICULTY_INCREASE_RATE = 0.02  # How fast spawn rate increases
+# Game balance - FASTER & MORE INTENSE
+ENEMY_THROW_TIME = 1.5  # 1.5 seconds (was 3.0)
+DIFFICULTY_INCREASE_RATE = 0.05  # Faster difficulty ramp
+MAX_ENEMIES_ON_SCREEN = 8  # Allow more simultaneous enemies
 
 # --- ASSET FOLDERS ---
 ENEMY_FOLDER = "assets/enemies"
 PROJECTILE_FOLDER = "assets/projectiles"
 SOUND_FOLDER = "assets/sounds"
 MUSIC_FOLDER = "assets/music"
+BACKGROUND_FOLDER = "assets/backgrounds"
 
 # --- COLORS ---
 BLACK = (0, 0, 0)
@@ -82,32 +84,66 @@ def load_sprite_flexible(folder, filename_variants, size, fallback_color):
     pygame.draw.circle(surf, fallback_color, (size[0]//2, size[1]//2), min(size)//2)
     return surf
 
-# --- PARTICLE SYSTEM ---
-class Particle:
-    def __init__(self, x, y, color, velocity_range=(-5, 5)):
-        self.x = x
-        self.y = y
-        angle = random.uniform(0, 2 * math.pi)
-        speed = random.uniform(3, 10)
-        self.vx = math.cos(angle) * speed
-        self.vy = math.sin(angle) * speed - 2
-        self.color = color
-        self.size = random.randint(4, 12)
-        self.lifetime = 40
-        
-    def update(self):
-        self.x += self.vx
-        self.y += self.vy
-        self.vy += 0.4
-        self.lifetime -= 1
-        self.size = max(1, self.size - 0.2)
-        
-    def draw(self, surf):
-        if self.lifetime > 0:
-            alpha = int(255 * (self.lifetime / 40))
-            s = pygame.Surface((int(self.size * 2), int(self.size * 2)), pygame.SRCALPHA)
-            pygame.draw.circle(s, (*self.color, alpha), (int(self.size), int(self.size)), int(self.size))
-            surf.blit(s, (int(self.x - self.size), int(self.y - self.size)))
+def load_background():
+    """Load background image or return None for solid color fallback"""
+    bg_variants = [
+        "background.png", "Background.png", "BACKGROUND.png",
+        "bg.png", "BG.png", "Bg.png",
+        "background.jpg", "Background.jpg", "BACKGROUND.jpg",
+        "bg.jpg", "BG.jpg", "Bg.jpg"
+    ]
+    
+    for variant in bg_variants:
+        path = os.path.join(BACKGROUND_FOLDER, variant)
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert()
+                return pygame.transform.scale(img, WINDOW_SIZE)
+            except:
+                pass
+    
+    return None  # No background found, use solid color
+
+# --- PARTICLE SYSTEM (OPTIMIZED) ---
+class ParticleSystem:
+    """Pre-rendered particle system for better performance"""
+    def __init__(self):
+        self.particles = []
+        # Pre-create particle surfaces (cache them)
+        self.particle_surfaces = {}
+        for size in range(4, 13):
+            surf = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (255, 255, 255), (size, size), size)
+            self.particle_surfaces[size] = surf
+    
+    def add_particles(self, x, y, color, count=20):
+        """Add multiple particles at once"""
+        for _ in range(count):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(3, 10)
+            vx = math.cos(angle) * speed
+            vy = math.sin(angle) * speed - 2
+            size = random.randint(4, 12)
+            self.particles.append([x, y, vx, vy, size, 40, color])  # x, y, vx, vy, size, lifetime, color
+    
+    def update_and_draw(self, surf):
+        """Batch update and draw"""
+        for p in self.particles[:]:
+            p[0] += p[2]  # x += vx
+            p[1] += p[3]  # y += vy
+            p[3] += 0.4   # vy += gravity
+            p[5] -= 1     # lifetime -= 1
+            
+            if p[5] <= 0:
+                self.particles.remove(p)
+            else:
+                # Use pre-rendered surface with color mod
+                size = int(p[4])
+                if size in self.particle_surfaces:
+                    alpha = int(255 * (p[5] / 40))
+                    temp_surf = self.particle_surfaces[size].copy()
+                    temp_surf.fill((*p[6], alpha), special_flags=pygame.BLEND_RGBA_MULT)
+                    surf.blit(temp_surf, (int(p[0] - size), int(p[1] - size)), special_flags=pygame.BLEND_ALPHA_SDL2)
 
 # --- PROJECTILE CLASS ---
 class Projectile:
@@ -165,7 +201,7 @@ class Enemy:
         self.speed = self.props["speed"]
         self.rising = True
         self.rise_timer = 0
-        self.rise_duration = 60
+        self.rise_duration = 40  # Faster rise (was 60)
         
         # Throw mechanics
         self.throw_timer = 0
@@ -369,7 +405,8 @@ class GameScene:
         
         self.enemies = []
         self.projectiles = []
-        self.particles = []
+        self.particle_system = ParticleSystem()  # ADD THIS LINE
+
         
         self.score = 0
         self.lives = 3
@@ -377,8 +414,8 @@ class GameScene:
         self.combo_timer = 0
         
         self.spawn_timer = 0
-        self.spawn_rate = 120
-        self.min_spawn_rate = 30
+        self.spawn_rate = 30  # Even faster start - spawn every 0.5 sec
+        self.min_spawn_rate = 10  # Endgame chaos - spawn every 0.16 sec
         
         self.game_over = False
         self.high_score = 0
@@ -386,9 +423,17 @@ class GameScene:
         # Track enemies marked for death
         self.death_animations = []
         
+        # Load background image
+        self.background = load_background()
+        self.bg_color = (20, 15, 30)  # Fallback dark purple
+        
         self.sound.play_music()
     
     def spawn_enemy(self):
+        # Don't spawn if too many enemies on screen
+        if len(self.enemies) >= MAX_ENEMIES_ON_SCREEN:
+            return
+            
         if self.score < 50:
             enemy_type = random.choice(["bandit", "ninja"])
         elif self.score < 150:
@@ -426,9 +471,8 @@ class GameScene:
                         self.combo_timer = 60
                         self.sound.play("SLASH")
                         
-                        # Particles
-                        for _ in range(20):
-                            self.particles.append(Particle(enemy.x, enemy.y, (200, 0, 0)))
+                        # Optimized particles
+                        self.particle_system.add_particles(enemy.x, enemy.y, (200, 0, 0), 15)
                         
                         # Mark for removal after death animation
                         self.death_animations.append((enemy, 30))
@@ -442,8 +486,8 @@ class GameScene:
                 self.combo = 0
                 self.sound.play("DAMAGE")
                 
-                for _ in range(30):
-                    self.particles.append(Particle(proj.x, proj.y, (255, 100, 0)))
+                # Optimized particles
+                self.particle_system.add_particles(proj.x, proj.y, (255, 100, 0), 20)
                 
                 proj.active = False
                 
@@ -490,12 +534,6 @@ class GameScene:
         
         self.check_projectile_hit()
         
-        # Update particles
-        for particle in self.particles[:]:
-            particle.update()
-            if particle.lifetime <= 0:
-                self.particles.remove(particle)
-        
         # Combo timer
         if self.combo_timer > 0:
             self.combo_timer -= 1
@@ -507,7 +545,11 @@ class GameScene:
             self.check_slice(pointer[0], pointer[1], prev_pointer[0], prev_pointer[1], velocity)
     
     def draw(self, screen):
-        screen.fill((20, 15, 30))
+        # Draw background image or solid color
+        if self.background:
+            screen.blit(self.background, (0, 0))
+        else:
+            screen.fill(self.bg_color)
         
         for enemy in self.enemies:
             enemy.draw(screen)
@@ -515,8 +557,8 @@ class GameScene:
         for proj in self.projectiles:
             proj.draw(screen)
         
-        for particle in self.particles:
-            particle.draw(screen)
+        # Draw particles (optimized batch rendering)
+        self.particle_system.update_and_draw(screen)
         
         # HUD
         score_text = self.font_medium.render(f"Score: {self.score}", True, YELLOW)
@@ -576,8 +618,9 @@ def main():
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
     cap.set(cv2.CAP_PROP_EXPOSURE, -6.0)
     
-    PROCESSING_WIDTH = 480 if DEV_MODE else 640
-    PROCESSING_HEIGHT = 360 if DEV_MODE else 480
+    # Lower processing resolution for performance at 1920x1080
+    PROCESSING_WIDTH = 320 if DEV_MODE else 480  # Much lower for speed
+    PROCESSING_HEIGHT = 240 if DEV_MODE else 360
     
     controller = HandController()
     sound = SoundManager()
@@ -649,14 +692,15 @@ def main():
         game.update(pointer, velocity, is_reliable, prev_pointer)
         game.draw(screen)
         
-        # Draw slash trail
+        # Draw slash trail (optimized - single surface)
         if len(controller.trail) > 1:
+            trail_surf = pygame.Surface(WINDOW_SIZE, pygame.SRCALPHA)
             for i in range(len(controller.trail) - 1):
                 alpha = int(200 * (i / len(controller.trail)))
                 thickness = int(12 * (i / len(controller.trail))) + 3
-                s = pygame.Surface(WINDOW_SIZE, pygame.SRCALPHA)
-                pygame.draw.line(s, (100, 200, 255, alpha), controller.trail[i], controller.trail[i + 1], thickness)
-                screen.blit(s, (0, 0))
+                color = (100, 200, 255, alpha)
+                pygame.draw.line(trail_surf, color, controller.trail[i], controller.trail[i + 1], thickness)
+            screen.blit(trail_surf, (0, 0), special_flags=pygame.BLEND_ALPHA_SDL2)
         
         if pointer and is_reliable:
             color = (100, 255, 100) if velocity > 15 else (255, 200, 0)

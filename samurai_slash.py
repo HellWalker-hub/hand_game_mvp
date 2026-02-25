@@ -24,10 +24,10 @@ USE_ROI = True  # Only detect hands in center region
 ROI_MARGIN = 0.15  # Ignore outer 15% of frame (where background people stand)
 USE_Z_DEPTH = True  # Prioritize closest hand using Z-coordinate
 
-# Game balance - BALANCED INTENSITY
-ENEMY_THROW_TIME = 2.0  # 2 seconds (was 1.5)
-DIFFICULTY_INCREASE_RATE = 0.03  # Moderate ramp (was 0.05)
-MAX_ENEMIES_ON_SCREEN = 6  # Slightly fewer (was 8)
+# Game balance - BALANCED PACE
+ENEMY_THROW_TIME = 2.0  # 2 seconds before throw (was 1.5)
+DIFFICULTY_INCREASE_RATE = 0.03  # Moderate difficulty ramp (was 0.05)
+MAX_ENEMIES_ON_SCREEN = 6  # Moderate enemy count (was 8)
 
 # --- ASSET FOLDERS ---
 ENEMY_FOLDER = "assets/enemies"
@@ -216,16 +216,37 @@ class Enemy:
         self.max_hp = self.props["hp"]
         self.points = self.props["points"]
         
-        # Position
-        self.x = random.randint(100, WINDOW_SIZE[0] - 100)
-        self.y = WINDOW_SIZE[1] + 50
-        self.target_y = random.randint(WINDOW_SIZE[1] - 250, WINDOW_SIZE[1] - 150)
+        # Random spawn direction: bottom, left, or right
+        spawn_direction = random.choice(["bottom", "left", "right"])
+        
+        if spawn_direction == "bottom":
+            # Spawn from bottom (classic)
+            self.x = random.randint(100, WINDOW_SIZE[0] - 100)
+            self.y = WINDOW_SIZE[1] + 50
+            self.target_y = random.randint(WINDOW_SIZE[1] - 400, WINDOW_SIZE[1] - 150)  # Variable stop height
+            self.target_x = self.x  # Stay in same X position
+            
+        elif spawn_direction == "left":
+            # Spawn from left side
+            self.x = -50
+            self.y = random.randint(WINDOW_SIZE[1] - 400, WINDOW_SIZE[1] - 150)
+            self.target_x = random.randint(200, WINDOW_SIZE[0] // 3)  # Move into screen
+            self.target_y = self.y  # Stay at same height
+            
+        else:  # right
+            # Spawn from right side
+            self.x = WINDOW_SIZE[0] + 50
+            self.y = random.randint(WINDOW_SIZE[1] - 400, WINDOW_SIZE[1] - 150)
+            self.target_x = random.randint(WINDOW_SIZE[0] * 2 // 3, WINDOW_SIZE[0] - 200)  # Move into screen
+            self.target_y = self.y  # Stay at same height
+        
+        self.spawn_direction = spawn_direction
         
         # Movement
         self.speed = self.props["speed"]
         self.rising = True
         self.rise_timer = 0
-        self.rise_duration = 40  # Faster rise (was 60)
+        self.rise_duration = 50  # Slightly slower rise (was 40)
         
         # Throw mechanics
         self.throw_timer = 0
@@ -285,14 +306,24 @@ class Enemy:
             if self.state_timer == 0:
                 self.set_state("idle")
         
-        # Rise up animation
+        # Movement animation based on spawn direction
         if self.rising:
             self.rise_timer += 1
             progress = self.rise_timer / self.rise_duration
-            self.y = WINDOW_SIZE[1] + 50 - (progress * (WINDOW_SIZE[1] + 50 - self.target_y))
+            
+            if self.spawn_direction == "bottom":
+                # Move upward
+                self.y = WINDOW_SIZE[1] + 50 - (progress * (WINDOW_SIZE[1] + 50 - self.target_y))
+            elif self.spawn_direction == "left":
+                # Move right
+                self.x = -50 + (progress * (self.target_x + 50))
+            else:  # right
+                # Move left
+                self.x = WINDOW_SIZE[0] + 50 - (progress * (WINDOW_SIZE[0] + 50 - self.target_x))
             
             if self.rise_timer >= self.rise_duration:
                 self.rising = False
+                self.x = self.target_x
                 self.y = self.target_y
         else:
             self.throw_timer += 1
@@ -399,7 +430,7 @@ class SoundManager:
                         pass
         
         # Try to load background music
-        music_variants = ["battle.wav", "Battle.wav", "BATTLE.wav", "music.wav", "Music.wav"]
+        music_variants = ["battle.mp3", "Battle.wav", "BATTLE.wav", "music.wav", "Music.wav"]
         for variant in music_variants:
             music_path = os.path.join(MUSIC_FOLDER, variant)
             if os.path.exists(music_path):
@@ -437,8 +468,8 @@ class GameScene:
         self.combo_timer = 0
         
         self.spawn_timer = 0
-        self.spawn_rate = 60  # More balanced - spawn every 1 sec (was 0.5)
-        self.min_spawn_rate = 20  # Max difficulty - spawn every 0.33 sec (was 0.16)
+        self.spawn_rate = 50  # Slower start - spawn every ~0.83 sec (was 0.5)
+        self.min_spawn_rate = 20  # Slower max - spawn every ~0.33 sec (was 0.16)
         
         self.game_over = False
         self.high_score = 0

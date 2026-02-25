@@ -132,7 +132,7 @@ def create_sword_cursor():
     if os.path.exists(custom_path):
         try:
             img = pygame.image.load(custom_path).convert_alpha()
-            return pygame.transform.scale(img, (64, 64))
+            return pygame.transform.scale(img, (120, 120))
         except:
             pass
 
